@@ -9,7 +9,8 @@ set(SDL2_INCLUDE_DIR "C:/vcpkg/installed/x64-mingw-dynamic/include")
 
 include_directories(${SDL2_INCLUDE_DIR})
 
-add_executable(CardGame src/main.cpp src/Game.cpp)
+file(GLOB SOURCES "${CMAKE_SOURCE_DIR}/src/*.cpp")
+add_executable(CardGame ${SOURCES})
 
 # Link libraries depending on configuration
 target_link_libraries(CardGame PRIVATE
