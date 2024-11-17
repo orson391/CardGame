@@ -16,6 +16,7 @@
 #include <algorithm>
 #include<set>
 #include <cstdint>
+#include <functional>
 
 
 // TODO: Reference additional headers your program requires here.

@@ -6,6 +6,7 @@ struct Button {
     SDL_Rect rect;
     SDL_Color color;
     std::string label;
+    std::function<void()> onClick;
 };
 
 uint32_t htonl(uint32_t hostlong) {
@@ -223,31 +224,33 @@ void renderButtonWithText(SDL_Renderer* renderer, const Button& button, TTF_Font
 void renderText(SDL_Renderer* renderer, TTF_Font* font, const std::string& text, SDL_Color color, int x, int y) {
     SDL_Surface* surface = TTF_RenderText_Blended(font, text.c_str(), color);
     SDL_Texture* texture = SDL_CreateTextureFromSurface(renderer, surface);
-
-    SDL_Rect destRect = { x, y, surface->w, surface->h };
-    SDL_RenderCopy(renderer, texture, nullptr, &destRect);
-
+    SDL_Rect dst = { x, y, surface->w, surface->h };
+    SDL_RenderCopy(renderer, texture, nullptr, &dst);
     SDL_FreeSurface(surface);
     SDL_DestroyTexture(texture);
 }
 
+// Function to check if a point is inside a rectangle
+bool isInside(const SDL_Rect& rect, int x, int y) {
+    return x >= rect.x && x <= (rect.x + rect.w) && y >= rect.y && y <= (rect.y + rect.h);
+}
 
-void generateCardButtons(SDL_Renderer* renderer, TTF_Font* font, const Player& player) {
-    // Button dimensions
+// Function to generate card buttons
+void generateCardButtons(SDL_Renderer* renderer, TTF_Font* font, const Player& player, std::vector<Button>& buttons) {
     int buttonWidth = 70;
     int buttonHeight = 30;
     int margin = 15;
 
-    // Grid properties
-    int buttonsPerRow = 5; // Number of buttons per row
-    int startX = 10;       // Starting X position
-    int startY = 10;       // Starting Y position
+    int buttonsPerRow = 5;
+    int startX = 10;
+    int startY = 10;
 
-    // Loop through player's cards and create buttons
+    buttons.clear(); // Clear previous buttons
+
     for (size_t i = 0; i < player.myCards.size(); ++i) {
         const Card& card = player.myCards[i];
 
-        // Create a label for the card
+        // Create card label
         std::string rankStr;
         switch (card.rank) {
         case Card::Rank::Two: rankStr = "2"; break;
@@ -275,11 +278,9 @@ void generateCardButtons(SDL_Renderer* renderer, TTF_Font* font, const Player& p
 
         std::string label = rankStr + " " + suitStr;
 
-        // Calculate row and column
         int row = static_cast<int>(i) / buttonsPerRow;
         int col = static_cast<int>(i) % buttonsPerRow;
 
-        // Define button position
         Button button;
         button.rect = {
             startX + col * (buttonWidth + margin),
@@ -287,30 +288,31 @@ void generateCardButtons(SDL_Renderer* renderer, TTF_Font* font, const Player& p
             buttonWidth,
             buttonHeight
         };
-        button.color = { 50, 150, 250, 255 }; // Blue color
+        button.color = { 50, 150, 250, 255 }; // Blue
         button.label = label;
 
-        // Draw button background
+        // Define click action for the button
+        button.onClick = [label]() {
+            std::cout << "Button clicked: " << label << std::endl;
+        };
+
+        buttons.push_back(button);
+
+        // Render button
         SDL_SetRenderDrawColor(renderer, button.color.r, button.color.g, button.color.b, button.color.a);
         SDL_RenderFillRect(renderer, &button.rect);
 
-        // Calculate text position (centered)
+        // Center the text
         int textWidth, textHeight;
         TTF_SizeText(font, button.label.c_str(), &textWidth, &textHeight);
         int textX = button.rect.x + (button.rect.w - textWidth) / 2;
         int textY = button.rect.y + (button.rect.h - textHeight) / 2;
 
-        // Draw button label
         renderText(renderer, font, button.label, { 255, 255, 255, 255 }, textX, textY); // White text
     }
 }
 
-
-
-
-
-
-
+// Main game room function
 void GameRoom(Player& pl) {
     std::cout << "Your cards:\n";
     for (const Card& card : pl.myCards) {
@@ -331,27 +333,40 @@ void GameRoom(Player& pl) {
         std::cerr << "Failed to load font: " << TTF_GetError() << std::endl;
         return;
     }
+
+    std::vector<Button> buttons;
     bool running = true;
     SDL_Event event;
+
     while (running) {
         while (SDL_PollEvent(&event)) {
             if (event.type == SDL_QUIT) {
                 running = false;
+            } else if (event.type == SDL_MOUSEBUTTONDOWN && event.button.button == SDL_BUTTON_LEFT) {
+                int mouseX = event.button.x;
+                int mouseY = event.button.y;
+
+                for (const Button& button : buttons) {
+                    if (isInside(button.rect, mouseX, mouseY) && button.onClick) {
+                        button.onClick(); // Trigger button action
+                    }
+                }
             }
         }
-        SDL_SetRenderDrawColor(renderer, 20, 20, 20, 255); // Dark background
+
+        SDL_SetRenderDrawColor(renderer, 20, 20, 20, 255);
         SDL_RenderClear(renderer);
 
-        generateCardButtons(renderer, font, pl);
+        generateCardButtons(renderer, font, pl, buttons);
 
         SDL_RenderPresent(renderer);
     }
+
     TTF_CloseFont(font);
     SDL_DestroyRenderer(renderer);
     SDL_DestroyWindow(window);
     TTF_Quit();
     SDL_Quit();
-    
 }
 
 
