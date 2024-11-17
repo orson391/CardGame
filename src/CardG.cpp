@@ -99,6 +99,45 @@ std::vector<Card> randdom(std::vector<Card> myne)
     return myne;
 }
 
+std::vector<Card> TableCard;
+
+int checkturn(std::vector<Player>& pelyas)
+{
+ 
+   
+        for(auto &p:pelyas)
+        {
+            for (size_t i = 0; i < p.myCards.size(); i++)
+            {
+                if (p.myCards[i].id == 51)
+                {
+                    p.isTurn = true;
+                    return i;
+                }
+            }
+            
+        }
+    
+    
+}
+
+int nextTurn(std::vector<Player>& pelyas, int currentPlayerIndex) {
+    // Set the current player's turn to false
+    pelyas[currentPlayerIndex].isTurn = false;
+
+    // Move to the next player (circular)
+    currentPlayerIndex = (currentPlayerIndex + 1) % pelyas.size();
+
+    // Set the next player's turn to true
+    pelyas[currentPlayerIndex].isTurn = true;
+
+    // Output the current player's turn using cout
+    std::cout << "It's Player " << pelyas[currentPlayerIndex].name << "'s turn now!" << std::endl;
+    return currentPlayerIndex;
+}
+
+
+
 
 
 
@@ -314,6 +353,10 @@ void generateCardButtons(SDL_Renderer* renderer, TTF_Font* font, const Player& p
 
 // Main game room function
 void GameRoom(Player& pl) {
+
+
+
+
     std::cout << "Your cards:\n";
     for (const Card& card : pl.myCards) {
         std::cout << card.toString() << "\n";
@@ -488,12 +531,22 @@ void createServer(std::vector<Card> deck) {
         }
     }
 
-
+    
     // Main Game Loop: Turn handling
     // Main Game Loop: Server plays like any other player
     
     Player& myserver = players.back();
+
+    
     GameRoom(myserver);
+        
+                
+            
+        
+        
+    
+    
+
 
 
     SDLNet_TCP_Close(server);
