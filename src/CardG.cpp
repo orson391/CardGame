@@ -129,7 +129,7 @@ int sendCardIDs(TCPsocket client, const std::vector<Card>& deck) {
 }
 
 
-int receiveCardIDs(TCPsocket client) {
+int receiveCardIDs(TCPsocket client,Player& me,std::vector<Card> deck) {
     // Receive the entire message with card IDs
     std::vector<int32_t> networkCardIDs;
 
@@ -150,11 +150,22 @@ int receiveCardIDs(TCPsocket client) {
         if (cardID == -1) {
             std::cout << "Termination marker received. End of card IDs.\n";
             break;
-            return 0;
+            //return 0;
         }
+        else
+        {
 
-        std::cout << "Received card IDs: " << cardID << std::endl;
+            std::cout << "Received card IDs: " << cardID << std::endl;
+            for (const auto& card : deck) {
+                if (card.id == cardID) {
+                    me.myCards.push_back(card);
+                    break;
+                }
+            }
+        }
+         
     }
+    return 0;
         
 }
 
@@ -209,14 +220,138 @@ void renderButtonWithText(SDL_Renderer* renderer, const Button& button, TTF_Font
 
 // Server function
 // Assuming the Player structure has been updated as needed.
+void renderText(SDL_Renderer* renderer, TTF_Font* font, const std::string& text, SDL_Color color, int x, int y) {
+    SDL_Surface* surface = TTF_RenderText_Blended(font, text.c_str(), color);
+    SDL_Texture* texture = SDL_CreateTextureFromSurface(renderer, surface);
 
-void GameRoom(Player& server) {
-    std::cout << "Server's cards:\n";
-    for (const Card& card : server.myCards) {
+    SDL_Rect destRect = { x, y, surface->w, surface->h };
+    SDL_RenderCopy(renderer, texture, nullptr, &destRect);
+
+    SDL_FreeSurface(surface);
+    SDL_DestroyTexture(texture);
+}
+
+
+void generateCardButtons(SDL_Renderer* renderer, TTF_Font* font, const Player& player) {
+    // Button dimensions
+    int buttonWidth = 70;
+    int buttonHeight = 30;
+    int margin = 15;
+
+    // Grid properties
+    int buttonsPerRow = 5; // Number of buttons per row
+    int startX = 10;       // Starting X position
+    int startY = 10;       // Starting Y position
+
+    // Loop through player's cards and create buttons
+    for (size_t i = 0; i < player.myCards.size(); ++i) {
+        const Card& card = player.myCards[i];
+
+        // Create a label for the card
+        std::string rankStr;
+        switch (card.rank) {
+        case Card::Rank::Two: rankStr = "2"; break;
+        case Card::Rank::Three: rankStr = "3"; break;
+        case Card::Rank::Four: rankStr = "4"; break;
+        case Card::Rank::Five: rankStr = "5"; break;
+        case Card::Rank::Six: rankStr = "6"; break;
+        case Card::Rank::Seven: rankStr = "7"; break;
+        case Card::Rank::Eight: rankStr = "8"; break;
+        case Card::Rank::Nine: rankStr = "9"; break;
+        case Card::Rank::Ten: rankStr = "10"; break;
+        case Card::Rank::Jack: rankStr = "J"; break;
+        case Card::Rank::Queen: rankStr = "Q"; break;
+        case Card::Rank::King: rankStr = "K"; break;
+        case Card::Rank::Ace: rankStr = "A"; break;
+        }
+
+        std::string suitStr;
+        switch (card.suit) {
+        case Card::Suit::Hearts: suitStr = "H"; break;
+        case Card::Suit::Diamonds: suitStr = "D"; break;
+        case Card::Suit::Clubs: suitStr = "C"; break;
+        case Card::Suit::Spades: suitStr = "S"; break;
+        }
+
+        std::string label = rankStr + " " + suitStr;
+
+        // Calculate row and column
+        int row = static_cast<int>(i) / buttonsPerRow;
+        int col = static_cast<int>(i) % buttonsPerRow;
+
+        // Define button position
+        Button button;
+        button.rect = {
+            startX + col * (buttonWidth + margin),
+            startY + row * (buttonHeight + margin),
+            buttonWidth,
+            buttonHeight
+        };
+        button.color = { 50, 150, 250, 255 }; // Blue color
+        button.label = label;
+
+        // Draw button background
+        SDL_SetRenderDrawColor(renderer, button.color.r, button.color.g, button.color.b, button.color.a);
+        SDL_RenderFillRect(renderer, &button.rect);
+
+        // Calculate text position (centered)
+        int textWidth, textHeight;
+        TTF_SizeText(font, button.label.c_str(), &textWidth, &textHeight);
+        int textX = button.rect.x + (button.rect.w - textWidth) / 2;
+        int textY = button.rect.y + (button.rect.h - textHeight) / 2;
+
+        // Draw button label
+        renderText(renderer, font, button.label, { 255, 255, 255, 255 }, textX, textY); // White text
+    }
+}
+
+
+
+
+
+
+
+void GameRoom(Player& pl) {
+    std::cout << "Your cards:\n";
+    for (const Card& card : pl.myCards) {
         std::cout << card.toString() << "\n";
     }
+    std::this_thread::sleep_for(std::chrono::seconds(5));
 
-    // Additional game logic can go here
+    if (SDL_Init(SDL_INIT_VIDEO) < 0 || TTF_Init() < 0) {
+        std::cerr << "Failed to initialize SDL or TTF: " << SDL_GetError() << std::endl;
+        return;
+    }
+
+    SDL_Window* window = SDL_CreateWindow("Player's Cards", SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED, 600, 600, SDL_WINDOW_SHOWN);
+    SDL_Renderer* renderer = SDL_CreateRenderer(window, -1, SDL_RENDERER_ACCELERATED);
+
+    TTF_Font* font = TTF_OpenFont("assets/fonts/arial.ttf", 24); // Replace with the path to your .ttf font file
+    if (!font) {
+        std::cerr << "Failed to load font: " << TTF_GetError() << std::endl;
+        return;
+    }
+    bool running = true;
+    SDL_Event event;
+    while (running) {
+        while (SDL_PollEvent(&event)) {
+            if (event.type == SDL_QUIT) {
+                running = false;
+            }
+        }
+        SDL_SetRenderDrawColor(renderer, 20, 20, 20, 255); // Dark background
+        SDL_RenderClear(renderer);
+
+        generateCardButtons(renderer, font, pl);
+
+        SDL_RenderPresent(renderer);
+    }
+    TTF_CloseFont(font);
+    SDL_DestroyRenderer(renderer);
+    SDL_DestroyWindow(window);
+    TTF_Quit();
+    SDL_Quit();
+    
 }
 
 
@@ -349,14 +484,7 @@ void createServer(std::vector<Card> deck) {
     SDLNet_TCP_Close(server);
     SDLNet_Quit();
 }
-
-
-
-
-
-
-
-void joinClient() {
+void joinClient(std::vector<Card> deck) {
     // Initialize SDL_net
     if (SDLNet_Init() == -1) {
         std::cerr << "SDLNet_Init Error: " << SDLNet_GetError() << std::endl;
@@ -416,20 +544,31 @@ void joinClient() {
     }
 
     // Now receive card data
+    Player me;
+    me.socket = client;
+    me.isConnected = true;
+    me.name = "You";
     while (gameStarted && running) {
-        int get = receiveCardIDs(client);
+        int get = receiveCardIDs(client,me,deck);
         if (get == -1)
         {
             std::cout << "Error Reciving cards" << "\n";
         }
         else
         {
+            GameRoom(me);
+            
+        
             break;
         }
         // Send acknowledgment
         //std::string action = "ACK";
         //SDLNet_TCP_Send(client, action.c_str(), action.length() + 1);
     }
+
+    
+    
+    
 
     // Cleanup
     SDLNet_TCP_Close(client);
@@ -444,12 +583,6 @@ bool isMouseOver(const SDL_Rect& rect, int mouseX, int mouseY) {
     return mouseX > rect.x && mouseX < rect.x + rect.w &&
         mouseY > rect.y && mouseY < rect.y + rect.h;
 }
-
-
-
-
-
-
 int main(int argc, char* argv[]) {
 
     std::vector<Card> deck = initializeDeck();
@@ -472,7 +605,7 @@ int main(int argc, char* argv[]) {
         return -1;
     }
 
-    SDL_Window* window = SDL_CreateWindow("SDL Button", SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED, 800, 600, SDL_WINDOW_SHOWN);
+    SDL_Window* window = SDL_CreateWindow("SDL Button", SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED,500 , 500, SDL_WINDOW_SHOWN);
     SDL_Renderer* renderer = SDL_CreateRenderer(window, -1, SDL_RENDERER_ACCELERATED);
 
     if (!window || !renderer) {
@@ -556,7 +689,7 @@ int main(int argc, char* argv[]) {
                 }
                 if (isMouseOver(button3.rect, mouseX, mouseY)) {
                     std::cout << "Button 3 clicked! Joining...\n";
-                    joinClient();
+                    joinClient(deck);
                     //running = false;
                 }
             }
