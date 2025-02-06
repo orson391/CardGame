@@ -3,6 +3,7 @@
 #include "CardG.h"
 
 struct Button {
+    int id;
     SDL_Rect rect;
     SDL_Color color;
     std::string label;
@@ -84,6 +85,8 @@ struct Player {
     int score = 0;                   // Player's score (optional, for scoring games)
     bool isTurn = false;             // Whether it's the player's turn
     bool isConnected = true;         // Track if the player is connected
+    bool isServer = false;
+    bool isLose = false;
 };
 
 
@@ -99,9 +102,27 @@ std::vector<Card> randdom(std::vector<Card> myne)
     return myne;
 }
 
-std::vector<Card> TableCard;
+void roundov(TCPsocket client, const std::string& message) {
+    if (SDLNet_TCP_Send(client, message.c_str(), message.length() + 1) == 0) {
+        std::cerr << "Error sending message: " << SDLNet_GetError() << std::endl;
+    } else {
+        std::cout << "Sent message: " << message << std::endl;
+    }
+}
 
-int checkturn(std::vector<Player>& pelyas)
+std::string roundre(TCPsocket client) {
+    char buffer[512];
+    int bytesReceived = SDLNet_TCP_Recv(client, buffer, sizeof(buffer) - 1);
+    
+    if (bytesReceived > 0) {
+        buffer[bytesReceived] = '\0'; // Null-terminate the received data
+        return std::string(buffer);
+    } else {
+        return "";
+    }
+}
+
+Player checkturn(std::vector<Player>& pelyas)
 {
  
    
@@ -112,7 +133,7 @@ int checkturn(std::vector<Player>& pelyas)
                 if (p.myCards[i].id == 51)
                 {
                     p.isTurn = true;
-                    return i;
+                    return p;
                 }
             }
             
@@ -210,6 +231,17 @@ int receiveCardIDs(TCPsocket client,Player& me,std::vector<Card> deck) {
 }
 
 
+void sendInt(TCPsocket socket, int value) {
+    SDLNet_TCP_Send(socket, &value, sizeof(value));
+}
+
+int receiveInt(TCPsocket socket) {
+    int value;
+    SDLNet_TCP_Recv(socket, &value, sizeof(value));
+    return value;
+}
+
+
 
 
 
@@ -279,7 +311,7 @@ void generateCardButtons(SDL_Renderer* renderer, TTF_Font* font, const Player& p
     int buttonWidth = 70;
     int buttonHeight = 30;
     int margin = 15;
-
+    TCPsocket me = player.socket;
     int buttonsPerRow = 5;
     int startX = 10;
     int startY = 10;
@@ -329,9 +361,11 @@ void generateCardButtons(SDL_Renderer* renderer, TTF_Font* font, const Player& p
         };
         button.color = { 50, 150, 250, 255 }; // Blue
         button.label = label;
+        button.id = card.id;
 
         // Define click action for the button
         button.onClick = [label]() {
+            
             std::cout << "Button clicked: " << label << std::endl;
         };
 
@@ -351,12 +385,8 @@ void generateCardButtons(SDL_Renderer* renderer, TTF_Font* font, const Player& p
     }
 }
 
-// Main game room function
-void GameRoom(Player& pl) {
 
-
-
-
+void serGameRoom(Player& pl, std::vector<Player>& players, std::vector<Card> deck) {
     std::cout << "Your cards:\n";
     for (const Card& card : pl.myCards) {
         std::cout << card.toString() << "\n";
@@ -371,7 +401,7 @@ void GameRoom(Player& pl) {
     SDL_Window* window = SDL_CreateWindow("Player's Cards", SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED, 600, 600, SDL_WINDOW_SHOWN);
     SDL_Renderer* renderer = SDL_CreateRenderer(window, -1, SDL_RENDERER_ACCELERATED);
 
-    TTF_Font* font = TTF_OpenFont("assets/fonts/arial.ttf", 24); // Replace with the path to your .ttf font file
+    TTF_Font* font = TTF_OpenFont("assets/fonts/arial.ttf", 24); // Path to .ttf font file
     if (!font) {
         std::cerr << "Failed to load font: " << TTF_GetError() << std::endl;
         return;
@@ -380,27 +410,223 @@ void GameRoom(Player& pl) {
     std::vector<Button> buttons;
     bool running = true;
     SDL_Event event;
+    std::vector<Card> tableCards;
+    bool cardsUpdated = false;  // Track card updates
+
+    // Initial check for the player whose turn it is
+    Player turnPlayer = checkturn(players);  // Check whose turn it is
+    roundov(turnPlayer.socket, "YouRTurn");  // Notify the current player it's their turn
 
     while (running) {
-        while (SDL_PollEvent(&event)) {
-            if (event.type == SDL_QUIT) {
-                running = false;
-            } else if (event.type == SDL_MOUSEBUTTONDOWN && event.button.button == SDL_BUTTON_LEFT) {
-                int mouseX = event.button.x;
-                int mouseY = event.button.y;
+        if (pl.isTurn) {
+            // Wait for player input during their turn
+            while (SDL_PollEvent(&event)) {
+                if (event.type == SDL_QUIT) {
+                    running = false;
+                } else if (event.type == SDL_MOUSEBUTTONDOWN && event.button.button == SDL_BUTTON_LEFT) {
+                    int mouseX = event.button.x;
+                    int mouseY = event.button.y;
 
-                for (const Button& button : buttons) {
-                    if (isInside(button.rect, mouseX, mouseY) && button.onClick) {
-                        button.onClick(); // Trigger button action
+                    // Check which button (card) was clicked
+                    for (Button& button : buttons) {
+                        if (isInside(button.rect, mouseX, mouseY) && button.onClick) {
+                            sendInt(pl.socket, button.id);  // Send the selected card ID to the server
+
+                            // Find the selected card from the deck and add it to table
+                            for (const Card& card : deck) {
+                                if (card.id == button.id) {
+                                    tableCards.push_back(card);
+                                    break;
+                                }
+                            }
+
+                            // Erase the played card from the player's hand
+                            pl.myCards.erase(std::remove_if(pl.myCards.begin(), pl.myCards.end(),
+                                [buttonId = button.id](const Card& card) {
+                                    return card.id == buttonId;
+                                }),
+                                pl.myCards.end());
+
+                            cardsUpdated = true;
+                            pl.isTurn = false;  // End player's turn
+                            button.onClick();  // Trigger button action (if any)
+                            break;
+                        }
                     }
                 }
             }
+        } else {
+            // If it's not the player's turn, wait for the card ID from the server
+            int cardId = receiveInt(pl.socket);
+            for (const Card& card : deck) {
+                if (card.id == cardId) {
+                    tableCards.push_back(card);
+                    break;
+                }
+            }
+        }
+        std::this_thread::sleep_for(std::chrono::seconds(2));
+        // Regenerate buttons if cards were updated
+        if (cardsUpdated) {
+            generateCardButtons(renderer, font, pl, buttons);
+            cardsUpdated = false;  // Reset the flag after regenerating buttons
         }
 
-        SDL_SetRenderDrawColor(renderer, 20, 20, 20, 255);
+        // Server-side handling of the round and player status
+        std::string roundStatus = roundre(pl.socket);
+        if (roundStatus == "YouRTurn") {
+            std::cout << "The round is over! Waiting for the next round...\n";
+            tableCards.clear();
+        } else if (roundStatus == "ROUND_OVER") {
+            std::cout << "The round is over! Waiting for the next round...\n";
+            tableCards.clear();
+        } else if (roundStatus == "Fail") {
+            std::cerr << "You " << roundStatus << "\n";
+            pl.myCards.insert(pl.myCards.end(), tableCards.begin(), tableCards.end());  // Return cards to the player
+            tableCards.clear();
+        } else {
+            std::cerr << "Unexpected message: " << roundStatus << "\n";
+        }
+
+        // Rendering phase
+        SDL_SetRenderDrawColor(renderer, 20, 20, 20, 255);  // Background color
         SDL_RenderClear(renderer);
 
-        generateCardButtons(renderer, font, pl, buttons);
+        // Render buttons (cards)
+        for (const Button& button : buttons) {
+            SDL_SetRenderDrawColor(renderer, button.color.r, button.color.g, button.color.b, button.color.a);
+            SDL_RenderFillRect(renderer, &button.rect);
+
+            // Render text on the button (card label)
+            int textWidth, textHeight;
+            TTF_SizeText(font, button.label.c_str(), &textWidth, &textHeight);
+            int textX = button.rect.x + (button.rect.w - textWidth) / 2;
+            int textY = button.rect.y + (button.rect.h - textHeight) / 2;
+            renderText(renderer, font, button.label, {255, 255, 255, 255}, textX, textY);  // White text
+        }
+
+        SDL_RenderPresent(renderer);
+    }
+
+    // Cleanup
+    TTF_CloseFont(font);
+    SDL_DestroyRenderer(renderer);
+    SDL_DestroyWindow(window);
+    TTF_Quit();
+    SDL_Quit();
+}
+
+
+
+
+void GameRoom(Player& pl, std::vector<Card> deck) {
+    std::cout << "Your cards:\n";
+    for (const Card& card : pl.myCards) {
+        std::cout << card.toString() << "\n";
+    }
+    std::this_thread::sleep_for(std::chrono::seconds(5));
+
+    // SDL and TTF initialization
+    if (SDL_Init(SDL_INIT_VIDEO) < 0 || TTF_Init() < 0) {
+        std::cerr << "Failed to initialize SDL or TTF: " << SDL_GetError() << std::endl;
+        return;
+    }
+
+    SDL_Window* window = SDL_CreateWindow("Player's Cards", SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED, 600, 600, SDL_WINDOW_SHOWN);
+    SDL_Renderer* renderer = SDL_CreateRenderer(window, -1, SDL_RENDERER_ACCELERATED);
+
+    TTF_Font* font = TTF_OpenFont("assets/fonts/arial.ttf", 24); // Path to .ttf font file
+    if (!font) {
+        std::cerr << "Failed to load font: " << TTF_GetError() << std::endl;
+        return;
+    }
+
+    std::vector<Button> buttons;
+    bool running = true;
+    SDL_Event event;
+    std::vector<Card> tableCards;
+    bool cardsUpdated = false;  // Track card updates
+
+    while (running) {
+        // Check for round status and turn change
+        std::string roundStatus = roundre(pl.socket);
+        if (roundStatus == "YouRTurn") {
+            pl.isTurn = true;
+            std::cout << "It's your turn!\n";
+        } else if (roundStatus == "ROUND_OVER") {
+            std::cout << "The round is over! Waiting for the next round...\n";
+            tableCards.clear();
+        } else if (roundStatus == "Fail") {
+            std::cerr << "You " << roundStatus << "\n";
+            pl.myCards.insert(pl.myCards.end(), tableCards.begin(), tableCards.end());
+            tableCards.clear();
+        } else {
+            std::cerr << "Unexpected message: " << roundStatus << "\n";
+        }
+
+        if (pl.isTurn) {
+            // Client-side: waiting for player input during their turn
+            while (SDL_PollEvent(&event)) {
+                if (event.type == SDL_QUIT) {
+                    running = false;
+                } else if (event.type == SDL_MOUSEBUTTONDOWN && event.button.button == SDL_BUTTON_LEFT) {
+                    int mouseX = event.button.x;
+                    int mouseY = event.button.y;
+
+                    for (Button& button : buttons) {
+                        if (isInside(button.rect, mouseX, mouseY) && button.onClick) {
+                            sendInt(pl.socket, button.id);  // Send the card ID to the server
+                            for (const Card& card : deck) {
+                                if (card.id == button.id) {
+                                    tableCards.push_back(card);  // Add the card to the table
+                                    break;
+                                }
+                            }
+
+                            // Remove the card from the player's hand
+                            pl.myCards.erase(std::remove_if(pl.myCards.begin(), pl.myCards.end(),
+                                [buttonId = button.id](const Card& card) {
+                                    return card.id == buttonId;
+                                }),
+                                pl.myCards.end());
+
+                            cardsUpdated = true;
+                            pl.isTurn = false;  // End the turn
+                            break;
+                        }
+                    }
+                }
+            }
+        } else {
+            // Waiting for the server's response for non-turn players
+            int cardId = receiveInt(pl.socket);
+            for (const Card& card : deck) {
+                if (card.id == cardId) {
+                    tableCards.push_back(card);  // Add the card to the table
+                    break;
+                }
+            }
+        }
+        std::this_thread::sleep_for(std::chrono::seconds(2));
+        if (cardsUpdated) {
+            generateCardButtons(renderer, font, pl, buttons);
+            cardsUpdated = false;  // Reset flag
+        }
+
+        SDL_SetRenderDrawColor(renderer, 20, 20, 20, 255);  // Background color
+        SDL_RenderClear(renderer);
+
+        // Render buttons and cards
+        for (const Button& button : buttons) {
+            SDL_SetRenderDrawColor(renderer, button.color.r, button.color.g, button.color.b, button.color.a);
+            SDL_RenderFillRect(renderer, &button.rect);
+
+            int textWidth, textHeight;
+            TTF_SizeText(font, button.label.c_str(), &textWidth, &textHeight);
+            int textX = button.rect.x + (button.rect.w - textWidth) / 2;
+            int textY = button.rect.y + (button.rect.h - textHeight) / 2;
+            renderText(renderer, font, button.label, {255, 255, 255, 255}, textX, textY);  // White text
+        }
 
         SDL_RenderPresent(renderer);
     }
@@ -411,6 +637,10 @@ void GameRoom(Player& pl) {
     TTF_Quit();
     SDL_Quit();
 }
+
+
+
+
 
 
 // Add server as a player
@@ -529,6 +759,9 @@ void createServer(std::vector<Card> deck) {
                 sentPlayers.insert(player.socket);  // Mark this player as having received their cards
             }
         }
+
+
+
     }
 
     
@@ -537,8 +770,8 @@ void createServer(std::vector<Card> deck) {
     
     Player& myserver = players.back();
 
-    
-    GameRoom(myserver);
+    myserver.isServer = true;
+    serGameRoom(myserver,players,deck);
         
                 
             
@@ -616,23 +849,18 @@ void joinClient(std::vector<Card> deck) {
     me.socket = client;
     me.isConnected = true;
     me.name = "You";
-    while (gameStarted && running) {
-        int get = receiveCardIDs(client,me,deck);
-        if (get == -1)
-        {
-            std::cout << "Error Reciving cards" << "\n";
-        }
-        else
-        {
-            GameRoom(me);
-            
-        
-            break;
-        }
-        // Send acknowledgment
-        //std::string action = "ACK";
-        //SDLNet_TCP_Send(client, action.c_str(), action.length() + 1);
+    me.socket = client;
+    int get = receiveCardIDs(client,me,deck);
+    if (get == -1)
+    {
+        std::cout << "Error Reciving cards" << "\n";
     }
+    else
+    {
+        std::cout << "Sucess Reciving cards" << "\n";
+        GameRoom(me,deck);
+    }
+    
 
     
     
@@ -651,7 +879,7 @@ bool isMouseOver(const SDL_Rect& rect, int mouseX, int mouseY) {
     return mouseX > rect.x && mouseX < rect.x + rect.w &&
         mouseY > rect.y && mouseY < rect.y + rect.h;
 }
-int main(int argc, char* argv[]) {
+int mainnn(int argc, char* argv[]) {
 
     std::vector<Card> deck = initializeDeck();
     std::cout << "Cards initalized" << std::endl;
@@ -695,12 +923,12 @@ int main(int argc, char* argv[]) {
     }
 
     // First button (black)
-    Button button1 = { {200, 200, 100, 30}, {0, 0, 0, 255}, "Start Server" };
+    Button button1 = {200, {200, 200, 100, 30}, {0, 0, 0, 255}, "Start Server" };
 
     // Second button (red)
-    Button button2 = { {200, 250, 100, 30}, {255, 0, 0, 255}, "Exit" };
+    Button button2 = { 221,{200, 250, 100, 30}, {255, 0, 0, 255}, "Exit" };
 
-    Button button3 = { {200, 300, 100, 30}, {0, 0, 0, 255}, "Join Client" };
+    Button button3 = { 222,{200, 300, 100, 30}, {0, 0, 0, 255}, "Join Client" };
 
     bool running = true;
     SDL_Event e;
